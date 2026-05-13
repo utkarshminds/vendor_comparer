@@ -41,3 +41,15 @@ def load_text_content(filename: str) -> str:
 def list_uploaded_files() -> List[str]:
     create_uploads_directory()
     return [item.name for item in UPLOAD_DIR.iterdir() if item.is_file()]
+
+
+def save_to_permanent_storage(filename: str, content: str) -> None:
+    """Save file content to permanent storage (vector DB)."""
+    # This will be handled by vector_db.py
+    pass
+
+
+def load_from_permanent_storage(filename: str) -> str:
+    """Load file content from permanent storage."""
+    # This will be handled by vector_db.py
+    return ""

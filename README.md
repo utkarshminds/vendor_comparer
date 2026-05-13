@@ -1,14 +1,91 @@
 # vendor_comparer
 Quotation comparison and file chat system
 
+## Overview
+
+`vendor_comparer` is a Streamlit-based application for securely uploading quotation documents, validating that they are actual quotations, comparing them with pros and cons summaries, and allowing users to chat with the uploaded files. The application is designed using a modular architecture, with clear separation between authentication, storage, Gemini API integration, and quotation reasoning.
+
+## Documentation
+
+### `login.py`
+- Main Streamlit app entry point
+- Handles authentication, file upload flow, file listing, deletion, analysis summary, and chat interface
+- Uses session state to preserve uploaded document context and conversation state
+
+### `auth.py`
+- Centralizes secure secrets retrieval
+- Provides login credential verification
+- Retrieves Gemini API configuration from `st.secrets`
+
+### `storage.py`
+- Manages file storage and file guardrails
+- Creates `uploads/` directory
+- Saves uploaded `.txt` and `.md` files
+- Loads and deletes uploaded files
+- Ensures only supported document types are accepted
+
+### `gemini_client.py`
+- Encapsulates Gemini API requests for text generation and embeddings
+- Protects the API key by reading it from `st.secrets`
+- Uses direct HTTPS POST requests to Gemini endpoints
+
+### `quote_system.py`
+- Validates uploaded documents as quotations
+- Builds embeddings for document retrieval
+- Generates comparative pros and cons summaries
+- Answers user questions using only uploaded quotation content
+- Contains guardrails for off-topic queries and quotation-only responses
+
 ## Features
 
-- **Secure login** with username and password stored in Streamlit secrets
-- **Quotation upload guardrails**: only quotation documents are accepted
-- **File analysis**: automatically compare uploaded quotation documents and summarize pros and cons
-- **Chat interface**: ask questions and receive answers derived only from uploaded files
-- **File management**: download or delete uploaded quotation files
-- **Gemini integration**: secure API key stored in secrets
+- Secure user authentication via Streamlit secrets
+- Quotation upload guardrails to reject unrelated files
+- Optional permanent storage in vector database for persistent access
+- Immediate document validation before saving
+- Persistent vector database storage for quotation chunks
+- Retrieval Augmented Generation (RAG) for chat answers from uploaded quotations
+- Automatic quotation comparison and pros/cons analysis
+- Auto-generate comparison table with parameters as rows and vendors as columns
+- Chat interface scoped to uploaded file content only
+- File management with download and delete functionality
+- Modular design for maintainability and security
+
+## Algorithm and Workflow
+
+1. **Login**
+   - User provides credentials stored in `.streamlit/secrets.toml`
+   - The app validates credentials and stores login state in Streamlit session state
+
+2. **Upload and validation**
+   - The user can upload `.txt` or `.md` files only
+   - Each file is decoded and validated using the Gemini model as a quotation document
+   - Non-quotation files are rejected with a warning message
+   - User can optionally save files to permanent vector database storage
+
+3. **Storage**
+   - Valid quotation files are written to `uploads/` for session access
+   - If permanent storage is selected, files are chunked and stored in ChromaDB vector database
+   - Filenames are tracked in session state with their parsed text content
+   - Uploaded files can be deleted at any time from both session and permanent storage
+
+4. **Vector DB and retrieval**
+   - Uploaded quotation files are split into overlapping text chunks
+   - Each chunk is embedded with Gemini and stored in a local vector database
+   - The vector DB is queried for the most relevant chunks when the user asks a question
+
+5. **Comparison summary**
+   - The app sends uploaded quotation content to Gemini with a prompt that asks for pros, cons, risks, pricing notes, and notable terms
+   - The result is displayed as a consolidated analysis summary
+
+6. **Auto-generate table**
+   - User can click "Auto-generate Comparison Table" to create a structured table
+   - Table has parameters (Pricing, Terms, etc.) as rows and vendor names as columns
+   - Each cell contains specific information extracted from the documents
+
+7. **Chat with files**
+   - User questions are answered using only the uploaded documents
+   - Gemini receives the top relevant document excerpts and a strict prompt enforcing source-only responses
+   - Off-topic questions are rejected with a fixed failure message
 
 ## Setup
 
@@ -27,38 +104,31 @@ gemini_model = "gemini-1.0"
 gemini_embedding_model = "gemini-embedding-1.0"
 ```
 
-3. Run the Streamlit app:
+3. Run the app:
 ```bash
 streamlit run login.py
 ```
 
-## Usage
+## Deployment Notes
 
-1. Login with your credentials
-2. Upload quotation files in `.txt` or `.md` format
-3. The app validates that the file contains a quotation document
-4. The app analyzes uploaded quotations and compares pros and cons
-5. Ask questions in the chat box and receive answers sourced only from uploaded files
-6. Delete uploaded files from the dashboard when needed
+- Do not commit `.streamlit/secrets.toml`, the `uploads/` folder, or the `vector_db/` folder to GitHub.
+- Add `gemini_api_key` in Streamlit Cloud secrets before deployment.
+- The app is designed so that answers are only based on uploaded quotation documents.
 
-## Streamlit Cloud Deployment
+## Security and Best Practices
 
-1. Push the code to GitHub. Do not commit `.streamlit/secrets.toml` or the `uploads/` folder.
-2. Create a new app on [Streamlit Cloud](https://share.streamlit.io/).
-3. In app settings, add the following secrets:
-```toml
-username = "your_username"
-password = "your_password"
-gemini_api_key = "YOUR_GEMINI_API_KEY"
-```
-4. Deploy the app.
+- Secrets are stored in `.streamlit/secrets.toml` and not committed
+- `uploads/` and `vector_db/` are ignored in `.gitignore`
+- Quotation validation prevents unrelated or malicious file content from entering the system
+- Chat responses are restricted to the uploaded files via prompt guardrails
 
-The app reads credentials and Gemini secrets from Streamlit secrets at runtime.
+## Supported File Types
 
-## Security
+- `.txt`
+- `.md`
 
-- Secrets are stored in `.streamlit/secrets.toml`
-- `.streamlit/secrets.toml` and `uploads/` are ignored via `.gitignore`
-- The app rejects files that are not recognized as quotations
-- Off-topic queries are blocked by the chat prompt guardrail
+## Notes
+
+- This project uses Gemini for both text generation and embeddings.
+- The application is intentionally limited to quotation documents and will decline unrelated requests.
 

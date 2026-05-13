@@ -9,18 +9,18 @@ from auth import (
 )
 from gemini_client import GeminiClient
 from quote_system import (
-    answer_from_documents,
-    build_document_embeddings,
+    answer_from_vector_db,
     compare_quotes,
+    generate_comparison_table,
     validate_quotation_document,
 )
 from storage import (
     allowed_file_type,
     create_uploads_directory,
     delete_uploaded_file,
-    load_text_content,
     save_uploaded_file,
 )
+from vector_db import VectorDB
 
 
 def init_session_state() -> None:
@@ -28,14 +28,14 @@ def init_session_state() -> None:
         st.session_state.logged_in = False
     if "documents" not in st.session_state:
         st.session_state.documents = {}
-    if "document_embeddings" not in st.session_state:
-        st.session_state.document_embeddings = {}
     if "analysis_summary" not in st.session_state:
         st.session_state.analysis_summary = ""
     if "chat_response" not in st.session_state:
         st.session_state.chat_response = ""
     if "upload_warnings" not in st.session_state:
         st.session_state.upload_warnings = []
+    if "table_response" not in st.session_state:
+        st.session_state.table_response = ""
 
 
 def get_gemini_client() -> GeminiClient | None:
@@ -49,7 +49,11 @@ def get_gemini_client() -> GeminiClient | None:
     )
 
 
-def upload_and_validate_files(uploaded_files, client: GeminiClient) -> None:
+def get_vector_db(client: GeminiClient) -> VectorDB:
+    return VectorDB(client)
+
+
+def upload_and_validate_files(uploaded_files, client: GeminiClient, vector_db: VectorDB, save_permanent: bool) -> None:
     if not uploaded_files:
         return
 
@@ -94,33 +98,33 @@ def upload_and_validate_files(uploaded_files, client: GeminiClient) -> None:
 
         saved_name = save_uploaded_file(uploaded_file)
         new_documents[saved_name] = file_text
+        if save_permanent:
+            vector_db.add_document(saved_name, file_text)
 
     if new_documents:
         st.session_state.documents.update(new_documents)
-        st.session_state.document_embeddings = build_document_embeddings(
-            st.session_state.documents, client
-        )
         st.session_state.analysis_summary = compare_quotes(
             st.session_state.documents, client
         )
         st.success(f"Uploaded {len(new_documents)} quotation file(s) successfully.")
 
 
-def delete_file(filename: str, client: GeminiClient) -> None:
+def delete_file(filename: str, client: GeminiClient, vector_db: VectorDB) -> None:
     if delete_uploaded_file(filename):
         st.session_state.documents.pop(filename, None)
-        st.session_state.document_embeddings.pop(filename, None)
+        vector_db.delete_document(filename)
         if st.session_state.documents:
             st.session_state.analysis_summary = compare_quotes(
                 st.session_state.documents, client
             )
         else:
             st.session_state.analysis_summary = ""
+            st.session_state.table_response = ""
         st.success(f"Deleted {filename} successfully.")
         st.experimental_rerun()
 
 
-def render_uploaded_files(client: GeminiClient) -> None:
+def render_uploaded_files(client: GeminiClient, vector_db: VectorDB) -> None:
     if not st.session_state.documents:
         return
 
@@ -138,7 +142,7 @@ def render_uploaded_files(client: GeminiClient) -> None:
         cols[1].write(f"{size_kb:.2f} KB")
 
         if cols[2].button("Delete", key=f"delete_{idx}"):
-            delete_file(filename, client)
+            delete_file(filename, client, vector_db)
 
         if os.path.exists(file_path):
             with open(file_path, "rb") as f:
@@ -150,7 +154,7 @@ def render_uploaded_files(client: GeminiClient) -> None:
                 )
 
 
-def render_chat_panel(client: GeminiClient) -> None:
+def render_chat_panel(client: GeminiClient, vector_db: VectorDB) -> None:
     if not st.session_state.documents:
         return
 
@@ -169,10 +173,9 @@ def render_chat_panel(client: GeminiClient) -> None:
             st.error("Please enter a question before submitting.")
         else:
             try:
-                response = answer_from_documents(
+                response = answer_from_vector_db(
                     query,
-                    st.session_state.documents,
-                    st.session_state.document_embeddings,
+                    vector_db,
                     client,
                 )
                 st.session_state.chat_response = response
@@ -196,7 +199,9 @@ def main() -> None:
             )
             return
 
-        st.title(f"Quotation Comparison Dashboard")
+        vector_db = get_vector_db(client)
+
+        st.title("Quotation Comparison Dashboard")
         st.write(f"Logged in as **{st.session_state.username}**")
 
         cols = st.columns([3, 1])
@@ -204,10 +209,10 @@ def main() -> None:
             if st.button("Logout", key="logout_button"):
                 st.session_state.logged_in = False
                 st.session_state.documents = {}
-                st.session_state.document_embeddings = {}
                 st.session_state.analysis_summary = ""
                 st.session_state.chat_response = ""
                 st.session_state.upload_warnings = []
+                st.session_state.table_response = ""
                 st.experimental_rerun()
 
         st.divider()
@@ -217,6 +222,8 @@ def main() -> None:
             "Upload `.txt` or `.md` quotation documents. Files that are not quotations will be rejected."
         )
 
+        save_permanent = st.checkbox("Save to permanent storage (vector database)", key="save_permanent")
+
         uploaded_files = st.file_uploader(
             "Select quotation files to upload",
             accept_multiple_files=True,
@@ -225,20 +232,33 @@ def main() -> None:
         )
 
         if uploaded_files and st.button("Validate and upload files", key="upload_button"):
-            upload_and_validate_files(uploaded_files, client)
+            upload_and_validate_files(uploaded_files, client, vector_db, save_permanent)
 
         if st.session_state.upload_warnings:
             for warning in st.session_state.upload_warnings:
                 st.warning(warning)
 
-        render_uploaded_files(client)
+        render_uploaded_files(client, vector_db)
 
         if st.session_state.analysis_summary:
             st.divider()
             st.subheader("📊 Quotation Comparison Summary")
             st.write(st.session_state.analysis_summary)
 
-        render_chat_panel(client)
+            if st.button("Auto-generate Comparison Table", key="auto_generate_button"):
+                try:
+                    table_response = generate_comparison_table(
+                        st.session_state.documents, client
+                    )
+                    st.session_state.table_response = table_response
+                except Exception as exc:
+                    st.error(f"Unable to generate table: {exc}")
+
+            if "table_response" in st.session_state and st.session_state.table_response:
+                st.subheader("📋 Comparison Table")
+                st.markdown(st.session_state.table_response)
+
+        render_chat_panel(client, vector_db)
 
     else:
         st.title("Login")

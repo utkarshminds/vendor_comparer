@@ -4,6 +4,9 @@
 # Uploaded files
 uploads/
 
+# Vector database persistence
+vector_db/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

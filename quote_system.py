@@ -1,16 +1,6 @@
-from math import sqrt
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 from gemini_client import GeminiClient
-
-
-def _cosine_similarity(a: List[float], b: List[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
-    mag_a = sqrt(sum(x * x for x in a))
-    mag_b = sqrt(sum(y * y for y in b))
-    if mag_a == 0 or mag_b == 0:
-        return 0.0
-    return dot / (mag_a * mag_b)
 
 
 def validate_quotation_document(text: str, client: GeminiClient) -> bool:
@@ -25,24 +15,6 @@ def validate_quotation_document(text: str, client: GeminiClient) -> bool:
     response = client.generate_text(prompt, temperature=0.0, max_output_tokens=40)
     normalized = response.strip().lower()
     return normalized.startswith("yes")
-
-
-def build_document_embeddings(documents: Dict[str, str], client: GeminiClient) -> Dict[str, List[float]]:
-    texts = list(documents.values())
-    results = client.embed_texts(texts)
-    return dict(zip(documents.keys(), results))
-
-
-def _get_top_documents(query: str, documents: Dict[str, str], embeddings: Dict[str, List[float]], client: GeminiClient, top_k: int = 2) -> List[Tuple[str, str]]:
-    query_embedding = client.embed_texts([query])
-    if not query_embedding:
-        return []
-    query_embedding = query_embedding[0]
-    scored = []
-    for name, doc_embedding in embeddings.items():
-        scored.append((name, _cosine_similarity(query_embedding, doc_embedding)))
-    scored.sort(key=lambda item: item[1], reverse=True)
-    return [(name, documents[name]) for name, _score in scored[:top_k]]
 
 
 def compare_quotes(documents: Dict[str, str], client: GeminiClient) -> str:
@@ -63,21 +35,44 @@ def compare_quotes(documents: Dict[str, str], client: GeminiClient) -> str:
     return client.generate_text(prompt, temperature=0.2, max_output_tokens=400)
 
 
-def answer_from_documents(query: str, documents: Dict[str, str], embeddings: Dict[str, List[float]], client: GeminiClient) -> str:
+def generate_comparison_table(documents: Dict[str, str], client: GeminiClient) -> str:
     if not documents:
+        return "Upload quotation documents first to generate a comparison table."
+
+    joined_documents = "\n\n".join(
+        [f"Document: {name}\n{text[:4000]}" for name, text in documents.items()]
+    )
+    prompt = (
+        "You are a quotation comparison assistant. "
+        "Create a comparison table for the uploaded quotation documents. "
+        "The table should have parameters as rows and vendor names as columns. "
+        "Include parameters like: Pricing, Terms, Delivery Time, Quality, Support, Risks, etc. "
+        "For each parameter and vendor, provide specific information from the documents. "
+        "Output the table in Markdown format with | separators. "
+        "Use only the content from the uploaded documents and do not invent information.\n\n"
+        "Uploaded quotations:\n"
+        + joined_documents
+    )
+    return client.generate_text(prompt, temperature=0.2, max_output_tokens=600)
+
+
+def answer_from_vector_db(query: str, vector_db, client: GeminiClient, top_k: int = 3) -> str:
+    if not vector_db or not vector_db.list_sources():
         return "No quotation documents are available. Upload files first."
 
-    top_documents = _get_top_documents(query, documents, embeddings, client, top_k=2)
-    if not top_documents:
-        return "Unable to retrieve relevant documents. Please try again." 
+    relevant_chunks = vector_db.query(query, top_k=top_k)
+    if not relevant_chunks:
+        return "I can only answer questions about the uploaded quotation documents."
 
-    joined_documents = "\n\n".join([f"Document: {name}\n{text[:4000]}" for name, text in top_documents])
+    joined_chunks = "\n\n".join(
+        [f"Source: {chunk['source']}\n{chunk['text'][:1200]}" for chunk in relevant_chunks]
+    )
     prompt = (
-        "You are a quotation assistant. Use only the uploaded quotation documents below to answer the user's query. "
-        "If the question is off-topic, reply with: 'I can only answer questions about the uploaded quotation documents.' "
+        "You are a quotation assistant. Answer using only the uploaded quotation document chunks below. "
+        "If the question is off-topic or unrelated to the uploaded quotations, reply with: 'I can only answer questions about the uploaded quotation documents.' "
         "Do not use outside knowledge or invent answers.\n\n"
-        "Uploaded quotation documents:\n"
-        + joined_documents
+        "Relevant quotation chunks:\n"
+        + joined_chunks
         + "\n\nUser question: "
         + query
     )
