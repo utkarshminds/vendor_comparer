@@ -1,9 +1,11 @@
-import os
+import io
 from pathlib import Path
-from typing import Dict, List
+from typing import List
+
+import PyPDF2
 
 UPLOAD_DIR = Path("uploads")
-ALLOWED_EXTENSIONS = {".txt", ".md"}
+ALLOWED_EXTENSIONS = {".txt", ".md", ".pdf"}
 
 
 def create_uploads_directory() -> None:
@@ -12,6 +14,23 @@ def create_uploads_directory() -> None:
 
 def allowed_file_type(filename: str) -> bool:
     return Path(filename).suffix.lower() in ALLOWED_EXTENSIONS
+
+
+def extract_pdf_text(uploaded_file) -> str:
+    uploaded_file.seek(0)
+    reader = PyPDF2.PdfReader(io.BytesIO(uploaded_file.getbuffer()))
+    pages = []
+    for page in reader.pages:
+        pages.append(page.extract_text() or "")
+    return "\n".join(pages).strip()
+
+
+def extract_uploaded_text(uploaded_file) -> str:
+    suffix = Path(uploaded_file.name).suffix.lower()
+    if suffix == ".pdf":
+        return extract_pdf_text(uploaded_file)
+    uploaded_file.seek(0)
+    return uploaded_file.getvalue().decode("utf-8", errors="ignore").strip()
 
 
 def save_uploaded_file(uploaded_file) -> str:

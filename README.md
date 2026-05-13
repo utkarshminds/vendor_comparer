@@ -20,7 +20,7 @@ Quotation comparison and file chat system
 ### `storage.py`
 - Manages file storage and file guardrails
 - Creates `uploads/` directory
-- Saves uploaded `.txt` and `.md` files
+- Saves uploaded `.txt`, `.md`, and `.pdf` files
 - Loads and deletes uploaded files
 - Ensures only supported document types are accepted
 
@@ -57,14 +57,14 @@ Quotation comparison and file chat system
    - The app validates credentials and stores login state in Streamlit session state
 
 2. **Upload and validation**
-   - The user can upload `.txt` or `.md` files only
-   - Each file is decoded and validated using the Gemini model as a quotation document
+   - The user can upload `.txt`, `.md`, or `.pdf` files
+   - Each file is decoded or extracted and validated using the Gemini model as a quotation document
    - Non-quotation files are rejected with a warning message
    - User can optionally save files to permanent vector database storage
 
 3. **Storage**
    - Valid quotation files are written to `uploads/` for session access
-   - If permanent storage is selected, files are chunked and stored in ChromaDB vector database
+   - If permanent storage is selected, files are chunked and stored in a local vector database for persistent retrieval
    - Filenames are tracked in session state with their parsed text content
    - Uploaded files can be deleted at any time from both session and permanent storage
 
@@ -126,6 +126,7 @@ streamlit run login.py
 
 - `.txt`
 - `.md`
+- `.pdf`
 
 ## Notes
 

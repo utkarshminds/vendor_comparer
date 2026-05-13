@@ -18,6 +18,7 @@ from storage import (
     allowed_file_type,
     create_uploads_directory,
     delete_uploaded_file,
+    extract_uploaded_text,
     save_uploaded_file,
 )
 from vector_db import VectorDB
@@ -65,21 +66,17 @@ def upload_and_validate_files(uploaded_files, client: GeminiClient, vector_db: V
         filename = uploaded_file.name
         if not allowed_file_type(filename):
             st.session_state.upload_warnings.append(
-                f"Skipping {filename}: unsupported file type. Only .txt and .md files are allowed."
-            )
-            continue
+                    f"Skipping {filename}: unsupported file type. Only .txt, .md, and .pdf files are allowed."
+                )
+                continue
 
-        if filename in st.session_state.documents:
-            st.session_state.upload_warnings.append(
-                f"Skipping {filename}: file already uploaded."
-            )
-            continue
+            if filename in st.session_state.documents:
+                st.session_state.upload_warnings.append(
+                    f"Skipping {filename}: file already uploaded."
+                )
+                continue
 
-        file_text = uploaded_file.getvalue().decode("utf-8", errors="ignore").strip()
-        if not file_text:
-            st.session_state.upload_warnings.append(
-                f"Skipping {filename}: file contains no readable text."
-            )
+            file_text = extract_uploaded_text(uploaded_file)
             continue
 
         try:
@@ -121,7 +118,6 @@ def delete_file(filename: str, client: GeminiClient, vector_db: VectorDB) -> Non
             st.session_state.analysis_summary = ""
             st.session_state.table_response = ""
         st.success(f"Deleted {filename} successfully.")
-        st.experimental_rerun()
 
 
 def render_uploaded_files(client: GeminiClient, vector_db: VectorDB) -> None:
@@ -213,13 +209,12 @@ def main() -> None:
                 st.session_state.chat_response = ""
                 st.session_state.upload_warnings = []
                 st.session_state.table_response = ""
-                st.experimental_rerun()
 
         st.divider()
 
         st.subheader("📁 Upload Quotation Files")
         st.write(
-            "Upload `.txt` or `.md` quotation documents. Files that are not quotations will be rejected."
+            "Upload `.txt`, `.md`, or `.pdf` quotation documents. Files that are not quotations will be rejected."
         )
 
         save_permanent = st.checkbox("Save to permanent storage (vector database)", key="save_permanent")
@@ -227,7 +222,7 @@ def main() -> None:
         uploaded_files = st.file_uploader(
             "Select quotation files to upload",
             accept_multiple_files=True,
-            type=["txt", "md"],
+            type=["txt", "md", "pdf"],
             key="file_uploader",
         )
 
@@ -273,7 +268,6 @@ def main() -> None:
                 st.session_state.logged_in = True
                 st.session_state.username = username
                 st.success("Login successful!")
-                st.experimental_rerun()
             else:
                 st.error("Invalid username or password. Please try again.")
 
