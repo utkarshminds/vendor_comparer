@@ -1,6 +1,60 @@
 from typing import Dict, List
 from gemini_client import GeminiClient
 
+def evaluate_bids_multimodal(rfq_bytes: bytes, bid_docs: Dict[str, Dict], client: GeminiClient) -> str:
+    # Prepare list for GeminiClient.generate_content_from_multiple_pdfs
+    file_list = [{"bytes": rfq_bytes, "mime_type": "application/pdf"}]
+    for data in bid_docs.values():
+        file_list.append(data)
+
+    prompt = (
+        "SYSTEM: You are a Procurement Auditor. Compare these vendor bids against the RFQ. "
+        "Examine all technical tables and specs in the PDFs. "
+        "Provide a compliance summary, pros, and cons for each vendor."
+    )
+    return client.generate_content_from_multiple_pdfs(file_list, prompt)
+# Inside quote_system.py
+def answer_from_multimodal_context(query: str, rfq_bytes: bytes, bid_docs: Dict[str, Dict], client: GeminiClient) -> str:
+    """
+    RAG-Free & Text-Extraction-Free: Sends all raw PDF bytes for holistic reasoning.
+    """
+    # 1. Gather all file data (RFQ + Bids)
+    file_data_list = [{"bytes": rfq_bytes, "mime_type": "application/pdf"}]
+    for name, data in bid_docs.items():
+        file_data_list.append(data)
+
+    # 2. Construct the instruction
+    prompt = (
+        "SYSTEM: You are a Technical Auditor. You have been provided with multiple PDFs: "
+        "The first is the RFQ baseline, and the rest are vendor bids. "
+        "Analyze the visual tables, technical specs, and text within these PDFs to answer the query.\n\n"
+        f"USER QUESTION: {query}"
+    )
+
+    return client.generate_content_from_multiple_pdfs(file_data_list, prompt)
+
+
+def validate_rfq_document_multimodal(file_bytes: bytes, mime_type: str, client: GeminiClient) -> bool:
+    """Validates RFQ/MR/RFO using the raw PDF structure."""
+    prompt = (
+        "SYSTEM: You are a technical procurement expert. Analyze the attached document. "
+        "Does it represent a baseline solicitation (RFQ, RFO, or Material Requisition)?\n"
+        "CRITERIA: 1. Scope of work. 2. Tag numbers/Line items for quote. 3. Technical norms.\n"
+        "Respond ONLY with YES or NO."
+    )
+    # temperature 0.0 for strict security audit
+    response = client.generate_content_from_bytes(file_bytes, mime_type, prompt, temperature=0.0)
+    print(f"Multimodal Validation Response: {response}")  # Debug log for validation response
+    return "YES" in response.upper()
+
+def validate_quotation_document_multimodal(file_bytes: bytes, mime_type: str, client: GeminiClient) -> bool:
+    """Validates if the raw PDF is a vendor bid or technical proposal."""
+    prompt = "Analyze this document. Is it a vendor technical bid or quotation? Respond ONLY with YES or NO."
+    response = client.generate_content_from_bytes(file_bytes, mime_type, prompt, temperature=0.0)
+    print(f"Multimodal Validation Response: {response}")  # Debug log for validation response
+    return "YES" in response.upper()
+
+
 def validate_rfq_document(text: str, client: GeminiClient) -> bool:
     """
     Validates if the document is a baseline procurement document (RFQ, MR, or RFO).
@@ -20,6 +74,7 @@ def validate_rfq_document(text: str, client: GeminiClient) -> bool:
     )
     
     # 0.0 temperature is correct for deterministic security validation
+    print(f"extracted text: {text[:4000]}")  # Debug log for validation prompt
     response = client.generate_text(prompt, temperature=0.0)
     print(f"Validation Response: {response}")  # Debug log for validation response
     return "YES" in response.upper()

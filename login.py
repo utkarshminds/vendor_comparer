@@ -15,7 +15,9 @@ from quote_system import (
     evaluate_bids_against_rfq, # Use the new evaluation logic
     generate_comparison_table,
     validate_quotation_document,
-    validate_rfq_document        # Add this for the new workflow
+    validate_rfq_document,        # Add this for the new workflow
+    validate_quotation_document_multimodal,  # Update this
+    validate_rfq_document_multimodal         # Update this
 )
 from storage import (
     allowed_file_type,
@@ -59,60 +61,17 @@ def get_gemini_client() -> GeminiClient | None:
 def get_vector_db(client: GeminiClient) -> VectorDB:
     return VectorDB(client)
 
-
-def upload_and_validate_files(uploaded_files, client: GeminiClient, vector_db: VectorDB, save_permanent: bool) -> None:
-    if not uploaded_files:
-        return
-
-    create_uploads_directory()
+def upload_and_validate_files(uploaded_files, client: GeminiClient) -> None:
     new_documents = {}
-    st.session_state.upload_warnings = []
-
     for uploaded_file in uploaded_files:
-        filename = uploaded_file.name
-        if not allowed_file_type(filename):
-            st.session_state.upload_warnings.append(
-                f"Skipping {filename}: unsupported file type. Only .txt, .md, and .pdf files are allowed."
-            )
-            continue
-
-        if filename in st.session_state.documents:
-            st.session_state.upload_warnings.append(
-                f"Skipping {filename}: file already uploaded."
-            )
-            continue
-
-        file_text = extract_uploaded_text(uploaded_file)
-        if not file_text:
-            st.session_state.upload_warnings.append(
-                f"Skipping {filename}: file contains no readable text."
-            )
-            continue
-
-        try:
-            valid = validate_quotation_document(file_text, client)
-        except Exception as exc:
-            st.session_state.upload_warnings.append(
-                f"Unable to validate {filename}: {exc}"
-            )
-            continue
-
-        if not valid:
-            st.session_state.upload_warnings.append(
-                f"Skipping {filename}: document is not recognized as a quotation."
-            )
-            continue
-
-        saved_name = save_uploaded_file(uploaded_file)
-        new_documents[saved_name] = file_text
-        if save_permanent:
-            vector_db.add_document(saved_name, file_text)
-
-    if new_documents:
-        st.session_state.documents.update(new_documents)
-        
-        st.success(f"Uploaded {len(new_documents)} quotation file(s) successfully.")
-
+        file_bytes = uploaded_file.getvalue()
+        if validate_quotation_document_multimodal(file_bytes, "application/pdf", client):
+            # Store bytes and mime_type for multimodal analysis
+            new_documents[uploaded_file.name] = {
+                "bytes": file_bytes,
+                "mime_type": "application/pdf"
+            }
+    st.session_state.documents.update(new_documents)
 
 def delete_file(filename: str, client: GeminiClient, vector_db: VectorDB) -> None:
     if delete_uploaded_file(filename):
@@ -227,20 +186,21 @@ def main() -> None:
                 st.info("Upload the project requirements (RFQ) first to establish evaluation norms.")
                 rfq_file = st.file_uploader(
                     "Upload RFQ/RFO Document", 
-                    type=["pdf", "txt", "md"], 
+                    type=["pdf"], 
                     key="rfq_uploader"
                 )
-                if rfq_file and st.button("Validate & Set RFQ"):
-                    text = extract_uploaded_text(rfq_file)
-                    # Security check: Validate if it's actually an RFQ
-                    from quote_system import validate_rfq_document
-                    if validate_rfq_document(text, client):
-                        st.session_state.rfq_text = text
-                        st.session_state.rfq_filename = rfq_file.name
-                        st.success(f"Baseline set: {rfq_file.name}")
-                        st.rerun()
-                    else:
-                        st.error("Document rejected: Does not appear to be a valid RFQ/RFO.")
+                # Change from extracting text to storing raw bytes
+                if rfq_file and st.button("Set Baseline"):
+                    file_bytes = rfq_file.getvalue()
+                    mime_type = "application/pdf"
+                    with st.spinner("Analyzing baseline..."):
+                        if validate_rfq_document_multimodal(file_bytes, mime_type, client):
+                            st.session_state.rfq_raw_bytes = file_bytes  # Store raw bytes
+                            st.session_state.rfq_filename = rfq_file.name
+                            st.success(f"Baseline set: {rfq_file.name}")
+                            st.rerun()
+                        else:
+                            st.error("Rejected: The document does not meet the technical criteria for an RFQ/MR.")
             else:
                 cols_rfq = st.columns([3, 1])
                 cols_rfq[0].success(f"**Active Baseline:** {st.session_state.rfq_filename}")
@@ -260,7 +220,7 @@ def main() -> None:
                 uploaded_bids = st.file_uploader(
                     "Upload Technical Bids", 
                     accept_multiple_files=True, 
-                    type=["pdf", "txt", "md"]
+                    type=["pdf"]
                 )
                 
                 if uploaded_bids and st.button("Validate & Process Bids"):

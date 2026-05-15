@@ -18,16 +18,20 @@ def allowed_file_type(filename: str) -> bool:
 
 def extract_pdf_text(uploaded_file) -> str:
     uploaded_file.seek(0)
+    print(f"Extracting text from PDF file: {uploaded_file.name}")  # Debug log for PDF extraction
     reader = PyPDF2.PdfReader(io.BytesIO(uploaded_file.getbuffer()))
     pages = []
     for page in reader.pages:
         pages.append(page.extract_text() or "")
+    print(f"Extracted text from PDF: {pages[0][:500]}")  # Debug log for extracted PDF text
     return "\n".join(pages).strip()
 
 
 def extract_uploaded_text(uploaded_file) -> str:
     suffix = Path(uploaded_file.name).suffix.lower()
+    print(f"Extracting text from file: {uploaded_file.name} with suffix: {suffix}")  # Debug log for file type
     if suffix == ".pdf":
+        print("Detected PDF file. Extracting text using PyPDF2.")  # Debug log for PDF extraction
         return extract_pdf_text(uploaded_file)
     uploaded_file.seek(0)
     return uploaded_file.getvalue().decode("utf-8", errors="ignore").strip()
