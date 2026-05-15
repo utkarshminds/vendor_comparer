@@ -16,7 +16,7 @@ def get_gemini_api_key() -> str:
 
 
 def get_gemini_model() -> str:
-    return get_secret("gemini_model", "gemini-1.0")
+    return get_secret("gemini_model", "gemini-3.5")
 
 
 def get_gemini_embedding_model() -> str:

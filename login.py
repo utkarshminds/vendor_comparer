@@ -1,3 +1,5 @@
+from email.mime import text
+from http import client
 import os
 import streamlit as st
 
@@ -10,9 +12,10 @@ from auth import (
 from gemini_client import GeminiClient
 from quote_system import (
     answer_from_vector_db,
-    compare_quotes,
+    evaluate_bids_against_rfq, # Use the new evaluation logic
     generate_comparison_table,
     validate_quotation_document,
+    validate_rfq_document        # Add this for the new workflow
 )
 from storage import (
     allowed_file_type,
@@ -37,7 +40,10 @@ def init_session_state() -> None:
         st.session_state.upload_warnings = []
     if "table_response" not in st.session_state:
         st.session_state.table_response = ""
-
+    if "rfq_text" not in st.session_state:
+        st.session_state.rfq_text = ""
+    if "rfq_filename" not in st.session_state:
+        st.session_state.rfq_filename = ""
 
 def get_gemini_client() -> GeminiClient | None:
     api_key = get_gemini_api_key()
@@ -66,17 +72,21 @@ def upload_and_validate_files(uploaded_files, client: GeminiClient, vector_db: V
         filename = uploaded_file.name
         if not allowed_file_type(filename):
             st.session_state.upload_warnings.append(
-                    f"Skipping {filename}: unsupported file type. Only .txt, .md, and .pdf files are allowed."
-                )
-                continue
+                f"Skipping {filename}: unsupported file type. Only .txt, .md, and .pdf files are allowed."
+            )
+            continue
 
-            if filename in st.session_state.documents:
-                st.session_state.upload_warnings.append(
-                    f"Skipping {filename}: file already uploaded."
-                )
-                continue
+        if filename in st.session_state.documents:
+            st.session_state.upload_warnings.append(
+                f"Skipping {filename}: file already uploaded."
+            )
+            continue
 
-            file_text = extract_uploaded_text(uploaded_file)
+        file_text = extract_uploaded_text(uploaded_file)
+        if not file_text:
+            st.session_state.upload_warnings.append(
+                f"Skipping {filename}: file contains no readable text."
+            )
             continue
 
         try:
@@ -100,9 +110,7 @@ def upload_and_validate_files(uploaded_files, client: GeminiClient, vector_db: V
 
     if new_documents:
         st.session_state.documents.update(new_documents)
-        st.session_state.analysis_summary = compare_quotes(
-            st.session_state.documents, client
-        )
+        
         st.success(f"Uploaded {len(new_documents)} quotation file(s) successfully.")
 
 
@@ -110,13 +118,11 @@ def delete_file(filename: str, client: GeminiClient, vector_db: VectorDB) -> Non
     if delete_uploaded_file(filename):
         st.session_state.documents.pop(filename, None)
         vector_db.delete_document(filename)
-        if st.session_state.documents:
-            st.session_state.analysis_summary = compare_quotes(
-                st.session_state.documents, client
-            )
-        else:
-            st.session_state.analysis_summary = ""
-            st.session_state.table_response = ""
+        
+        # Clear the old evaluations so the user can run a fresh one
+        st.session_state.analysis_summary = ""
+        st.session_state.table_response = ""
+        
         st.success(f"Deleted {filename} successfully.")
 
 
@@ -183,94 +189,129 @@ def render_chat_panel(client: GeminiClient, vector_db: VectorDB) -> None:
         st.write(st.session_state.chat_response)
 
 
+
 def main() -> None:
-    st.set_page_config(page_title="Quotation Comparison", layout="wide")
+    st.set_page_config(page_title="Secure Bid Evaluator", layout="wide")
     init_session_state()
 
     if st.session_state.logged_in:
         client = get_gemini_client()
         if not client:
-            st.error(
-                "Gemini API key not configured. Add `gemini_api_key` to your Streamlit secrets."
-            )
+            st.error("Gemini API key not configured. Check your secure environment variables.")
             return
 
         vector_db = get_vector_db(client)
 
-        st.title("Quotation Comparison Dashboard")
-        st.write(f"Logged in as **{st.session_state.username}**")
-
-        cols = st.columns([3, 1])
-        with cols[1]:
-            if st.button("Logout", key="logout_button"):
-                st.session_state.logged_in = False
-                st.session_state.documents = {}
-                st.session_state.analysis_summary = ""
-                st.session_state.chat_response = ""
-                st.session_state.upload_warnings = []
-                st.session_state.table_response = ""
+        # Header with Logout
+        col_title, col_logout = st.columns([4, 1])
+        with col_title:
+            st.title("🛡️ Secure Technical Bid Evaluation")
+            st.caption(f"Authenticated as: {st.session_state.username}")
+        with col_logout:
+            if st.button("Logout", use_container_width=True):
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
+                st.rerun()
 
         st.divider()
 
-        st.subheader("📁 Upload Quotation Files")
-        st.write(
-            "Upload `.txt`, `.md`, or `.pdf` quotation documents. Files that are not quotations will be rejected."
-        )
+        # Implementation of the Tabbed Interface
+        tab_eval, tab_chat = st.tabs(["⚖️ Evaluation Dashboard", "💬 Secure Technical Chat"])
 
-        save_permanent = st.checkbox("Save to permanent storage (vector database)", key="save_permanent")
+        # --- TAB 1: EVALUATION DASHBOARD ---
+        with tab_eval:
+            # 1. RFQ/RFO BASELINE SECTION
+            st.subheader("1. Request for Quotation (RFQ) Baseline")
+            
+            if not st.session_state.get("rfq_filename"):
+                st.info("Upload the project requirements (RFQ) first to establish evaluation norms.")
+                rfq_file = st.file_uploader(
+                    "Upload RFQ/RFO Document", 
+                    type=["pdf", "txt", "md"], 
+                    key="rfq_uploader"
+                )
+                if rfq_file and st.button("Validate & Set RFQ"):
+                    text = extract_uploaded_text(rfq_file)
+                    # Security check: Validate if it's actually an RFQ
+                    from quote_system import validate_rfq_document
+                    if validate_rfq_document(text, client):
+                        st.session_state.rfq_text = text
+                        st.session_state.rfq_filename = rfq_file.name
+                        st.success(f"Baseline set: {rfq_file.name}")
+                        st.rerun()
+                    else:
+                        st.error("Document rejected: Does not appear to be a valid RFQ/RFO.")
+            else:
+                cols_rfq = st.columns([3, 1])
+                cols_rfq[0].success(f"**Active Baseline:** {st.session_state.rfq_filename}")
+                if cols_rfq[1].button("Reset RFQ", type="secondary"):
+                    st.session_state.rfq_text = ""
+                    st.session_state.rfq_filename = ""
+                    st.rerun()
 
-        uploaded_files = st.file_uploader(
-            "Select quotation files to upload",
-            accept_multiple_files=True,
-            type=["txt", "md", "pdf"],
-            key="file_uploader",
-        )
-
-        if uploaded_files and st.button("Validate and upload files", key="upload_button"):
-            upload_and_validate_files(uploaded_files, client, vector_db, save_permanent)
-
-        if st.session_state.upload_warnings:
-            for warning in st.session_state.upload_warnings:
-                st.warning(warning)
-
-        render_uploaded_files(client, vector_db)
-
-        if st.session_state.analysis_summary:
             st.divider()
-            st.subheader("📊 Quotation Comparison Summary")
-            st.write(st.session_state.analysis_summary)
 
-            if st.button("Auto-generate Comparison Table", key="auto_generate_button"):
-                try:
-                    table_response = generate_comparison_table(
-                        st.session_state.documents, client
-                    )
-                    st.session_state.table_response = table_response
-                except Exception as exc:
-                    st.error(f"Unable to generate table: {exc}")
+            # 2. VENDOR BIDS SECTION
+            st.subheader("2. Technical Vendor Bids")
+            if not st.session_state.rfq_filename:
+                st.warning("Please upload a baseline RFQ above before processing vendor bids.")
+            else:
+                save_perm = st.checkbox("Commit to Secure Vector Vault", value=True)
+                uploaded_bids = st.file_uploader(
+                    "Upload Technical Bids", 
+                    accept_multiple_files=True, 
+                    type=["pdf", "txt", "md"]
+                )
+                
+                if uploaded_bids and st.button("Validate & Process Bids"):
+                    upload_and_validate_files(uploaded_bids, client, vector_db, save_perm)
+                
+                if st.session_state.upload_warnings:
+                    for w in st.session_state.upload_warnings:
+                        st.warning(w)
 
-            if "table_response" in st.session_state and st.session_state.table_response:
-                st.subheader("📋 Comparison Table")
-                st.markdown(st.session_state.table_response)
+                render_uploaded_files(client, vector_db)
 
-        render_chat_panel(client, vector_db)
+                # 3. ANALYSIS SECTION
+                if st.session_state.documents:
+                    st.divider()
+                    st.subheader("3. Automated Technical Evaluation")
+                    if st.button("Run Full Comparison Analysis", type="primary"):
+                        with st.spinner("Analyzing bids against technical norms..."):
+                            from quote_system import evaluate_bids_against_rfq
+                            summary = evaluate_bids_against_rfq(
+                                st.session_state.rfq_text, 
+                                st.session_state.documents, 
+                                client
+                            )
+                            st.session_state.analysis_summary = summary
+                    
+                    if st.session_state.analysis_summary:
+                        st.markdown("### Evaluation Summary")
+                        st.write(st.session_state.analysis_summary)
+
+        # --- TAB 2: SECURE CHAT ---
+        with tab_chat:
+            if not st.session_state.documents:
+                st.info("The chat interface will activate once technical bids are uploaded and validated.")
+            else:
+                st.subheader("💬 Technical Query Interface")
+                st.caption("Answers are strictly limited to the content of validated technical bids.")
+                render_chat_panel(client, vector_db)
 
     else:
-        st.title("Login")
-
+        # Standard Login Form
+        st.title("🔐 Corporate Login")
         with st.form("login_form"):
-            username = st.text_input("Username")
-            password = st.text_input("Password", type="password")
-            submit_button = st.form_submit_button("Login")
-
-        if submit_button:
-            if check_credentials(username, password):
-                st.session_state.logged_in = True
-                st.session_state.username = username
-                st.success("Login successful!")
-            else:
-                st.error("Invalid username or password. Please try again.")
-
+            user = st.text_input("Username")
+            pw = st.text_input("Password", type="password")
+            if st.form_submit_button("Access System"):
+                if check_credentials(user, pw):
+                    st.session_state.logged_in = True
+                    st.session_state.username = user
+                    st.rerun()
+                else:
+                    st.error("Authentication failed. Please check credentials.")
 
 if __name__ == "__main__":
     main()

@@ -100,7 +100,7 @@ username = "test"
 password = "0123456789p"
 gemini_api_key = "YOUR_GEMINI_API_KEY"
 # Optional:
-gemini_model = "gemini-1.0"
+gemini_model = "gemini-3.5"
 gemini_embedding_model = "gemini-embedding-1.0"
 ```
 
