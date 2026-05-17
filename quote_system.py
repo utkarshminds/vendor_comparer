@@ -2,16 +2,23 @@ from typing import Dict, List
 from gemini_client import GeminiClient
 
 def evaluate_bids_multimodal(rfq_bytes: bytes, bid_docs: Dict[str, Dict], client: GeminiClient) -> str:
-    # Prepare list for GeminiClient.generate_content_from_multiple_pdfs
+    # 1. Start the file list with the RFQ baseline
     file_list = [{"bytes": rfq_bytes, "mime_type": "application/pdf"}]
+    
+    # 2. Add each vendor bid to the list
     for data in bid_docs.values():
-        file_list.append(data)
+        file_list.append({
+            "bytes": data["bytes"], 
+            "mime_type": data["mime_type"]
+        })
 
     prompt = (
         "SYSTEM: You are a Procurement Auditor. Compare these vendor bids against the RFQ. "
-        "Examine all technical tables and specs in the PDFs. "
-        "Provide a compliance summary, pros, and cons for each vendor."
+        "Analyze visual tables, technical specifications, and formatting in the PDFs. "
+        "Provide a compliance summary, pros, and cons for each vendor relative to the RFQ requirements. Entire analysis should be based on the content of the PDFs without any assumptions. Be concise and technical. Give output in form of table only. Do not discuss the system or code. Focus solely on the technical evaluation of the bids against the RFQ. Consider all parameters given in the RFQ, including scope, technical norms, and line items. If information is missing in a bid, note that as a con. Do not make assumptions beyond the provided documents."
     )
+    
+    # Send all files at once to Gemini 3.1 Flash Lite
     return client.generate_content_from_multiple_pdfs(file_list, prompt)
 # Inside quote_system.py
 def answer_from_multimodal_context(query: str, rfq_bytes: bytes, bid_docs: Dict[str, Dict], client: GeminiClient) -> str:

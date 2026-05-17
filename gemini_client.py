@@ -6,7 +6,7 @@ class GeminiClient:
     BASE_URL = "https://generativelanguage.googleapis.com/v1"
 
     # Defaulting to Pro as confirmed available for your key
-    def __init__(self, api_key: str, model: str = "gemini-2.5-pro", embed_model: str = "text-embedding-004"):
+    def __init__(self, api_key: str, model: str = "gemini-3.1-flash-lite", embed_model: str = "text-embedding-004"):
         self.api_key = api_key
         self.model = model
         self.embed_model = embed_model
@@ -111,8 +111,13 @@ class GeminiClient:
             parts.append({"inline_data": {"mime_type": file_info["mime_type"], "data": encoded}})
 
         parts.append({"text": prompt})
-        payload = {"contents": [{"parts": parts}], 
-                "generationConfig": {"temperature": 0.1, "thinking": True}} # Thinking mode for better audit
+        payload = {
+                    "contents": [{"parts": parts}], 
+                    "generationConfig": {
+                        "temperature": 0.1,
+                        "maxOutputTokens": 2048  # Increased for complex technical evaluation
+                    }
+                }
 
         result = self._post(f"{self.model}:generateContent", payload)
         return result["candidates"][0]["content"]["parts"][0]["text"].strip()

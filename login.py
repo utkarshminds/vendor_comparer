@@ -65,12 +65,18 @@ def upload_and_validate_files(uploaded_files, client: GeminiClient) -> None:
     new_documents = {}
     for uploaded_file in uploaded_files:
         file_bytes = uploaded_file.getvalue()
+        # 1. Multimodal validation (No text extraction needed)
         if validate_quotation_document_multimodal(file_bytes, "application/pdf", client):
-            # Store bytes and mime_type for multimodal analysis
+            # 2. Store in memory for Gemini 3.1 Long Context
             new_documents[uploaded_file.name] = {
                 "bytes": file_bytes,
                 "mime_type": "application/pdf"
             }
+            # 3. Save to temp disk so the UI shows the correct KB
+            save_uploaded_file(uploaded_file) 
+        else:
+            st.error(f"Validation failed for {uploaded_file.name}")
+            
     st.session_state.documents.update(new_documents)
 
 def delete_file(filename: str, client: GeminiClient, vector_db: VectorDB) -> None:
@@ -115,37 +121,18 @@ def render_uploaded_files(client: GeminiClient, vector_db: VectorDB) -> None:
                 )
 
 
-def render_chat_panel(client: GeminiClient, vector_db: VectorDB) -> None:
-    if not st.session_state.documents:
-        return
-
-    st.divider()
-    st.subheader("💬 Chat with uploaded quotations")
-
-    with st.form("chat_form"):
-        query = st.text_input(
-            "Ask a question about the uploaded quotations",
-            key="chat_query",
+def render_chat_panel(client: GeminiClient) -> None:
+    # Use the function you already defined in quote_system.py
+    from quote_system import answer_from_multimodal_context
+    
+    if st.button("Submit"):
+        response = answer_from_multimodal_context(
+            query=st.session_state.chat_query,
+            rfq_bytes=st.session_state.rfq_raw_bytes,
+            bid_docs=st.session_state.documents,
+            client=client
         )
-        submit_button = st.form_submit_button("Submit")
-
-    if submit_button:
-        if not query:
-            st.error("Please enter a question before submitting.")
-        else:
-            try:
-                response = answer_from_vector_db(
-                    query,
-                    vector_db,
-                    client,
-                )
-                st.session_state.chat_response = response
-            except Exception as exc:
-                st.error(f"Unable to answer the query: {exc}")
-
-    if st.session_state.chat_response:
-        st.markdown("**Response:**")
-        st.write(st.session_state.chat_response)
+        st.session_state.chat_response = response
 
 
 
@@ -216,7 +203,7 @@ def main() -> None:
             if not st.session_state.rfq_filename:
                 st.warning("Please upload a baseline RFQ above before processing vendor bids.")
             else:
-                save_perm = st.checkbox("Commit to Secure Vector Vault", value=True)
+                
                 uploaded_bids = st.file_uploader(
                     "Upload Technical Bids", 
                     accept_multiple_files=True, 
@@ -224,7 +211,7 @@ def main() -> None:
                 )
                 
                 if uploaded_bids and st.button("Validate & Process Bids"):
-                    upload_and_validate_files(uploaded_bids, client, vector_db, save_perm)
+                    upload_and_validate_files(uploaded_bids, client)
                 
                 if st.session_state.upload_warnings:
                     for w in st.session_state.upload_warnings:
@@ -237,14 +224,21 @@ def main() -> None:
                     st.divider()
                     st.subheader("3. Automated Technical Evaluation")
                     if st.button("Run Full Comparison Analysis", type="primary"):
-                        with st.spinner("Analyzing bids against technical norms..."):
-                            from quote_system import evaluate_bids_against_rfq
-                            summary = evaluate_bids_against_rfq(
-                                st.session_state.rfq_text, 
-                                st.session_state.documents, 
-                                client
-                            )
-                            st.session_state.analysis_summary = summary
+                        # Check for raw bytes instead of text
+                        if not st.session_state.get("rfq_raw_bytes"):
+                            st.error("Please upload the Request for Quotation (RFQ) first.")
+                        elif not st.session_state.documents:
+                            st.error("Please upload at least one technical bid to evaluate.")
+                        else:
+                            with st.spinner("Analyzing bids against technical norms..."):
+                                # Call the multimodal function you defined in quote_system.py
+                                from quote_system import evaluate_bids_multimodal
+                                summary = evaluate_bids_multimodal(
+                                    st.session_state.rfq_raw_bytes, 
+                                    st.session_state.documents, 
+                                    client
+                                )
+                                st.session_state.analysis_summary = summary
                     
                     if st.session_state.analysis_summary:
                         st.markdown("### Evaluation Summary")
@@ -257,7 +251,7 @@ def main() -> None:
             else:
                 st.subheader("💬 Technical Query Interface")
                 st.caption("Answers are strictly limited to the content of validated technical bids.")
-                render_chat_panel(client, vector_db)
+                render_chat_panel(client)
 
     else:
         # Standard Login Form
