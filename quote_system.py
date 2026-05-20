@@ -14,8 +14,8 @@ def evaluate_bids_multimodal(rfq_bytes: bytes, bid_docs: Dict[str, Dict], client
 
     prompt = (
         "SYSTEM: You are a Procurement Auditor. Compare these vendor bids against the RFQ. "
-        "Analyze visual tables, technical specifications, and formatting in the PDFs. "
-        "Provide a compliance summary, pros, and cons for each vendor relative to the RFQ requirements. Entire analysis should be based on the content of the PDFs without any assumptions. Be concise and technical. Give output in form of table only. Do not discuss the system or code. Focus solely on the technical evaluation of the bids against the RFQ. Consider all parameters given in the RFQ, including scope, technical norms, and line items. If information is missing in a bid, note that as a con. Do not make assumptions beyond the provided documents."
+        "Analyze visual tables, technical specifications, and formatting in the PDFs. " 
+        "Provide a compliance details include all exhaustive details, for each vendor relative to the RFQ requirements. Mention exact details including numbers if any. Entire analysis should be based on the content of the PDFs without any assumptions. Be concise and technical. Give output in form of table only. Do not discuss the system or code. Focus solely on the technical evaluation of the bids against the RFQ. Consider all parameters given in the RFQ, including scope, technical norms, and line items. If information is missing in a bid, note that as a con. Do not make assumptions beyond the provided documents."
     )
     
     # Send all files at once to Gemini 3.1 Flash Lite
@@ -170,3 +170,30 @@ def generate_comparison_table(documents: Dict[str, str], client: GeminiClient) -
         "Uploaded quotations:\n" + joined_documents
     )
     return client.generate_text(prompt, temperature=0.2, max_output_tokens=600)
+
+def extract_rfq_requirements(rfq_bytes: bytes, client: GeminiClient) -> str:
+    """Extracts a concise paragraph of requirements from the raw RFQ PDF."""
+    prompt = (
+        "SYSTEM: You are a technical procurement expert. Extract the core requirements from the attached RFQ document. "
+        "Provide ONLY a concise, single paragraph outlining the specific technical, functional, and material requirements "
+        "of the company issuing the RFQ. Do not include any introductory text, greetings, or any other details."
+    )
+    return client.generate_content_from_bytes(rfq_bytes, "application/pdf", prompt, temperature=0.1)
+
+def evaluate_requirement_multimodal(
+    requirement: str,
+    rfq_bytes: bytes,
+    bid_docs: dict,
+    client: GeminiClient
+) -> str:
+    # Placeholder for multimodal evaluation of a specific requirement
+    return f"Detailed analysis for requirement '{requirement}' coming soon!"
+
+
+def generate_pros_cons_summary_multimodal(
+    rfq_bytes: bytes,
+    bid_docs: dict,
+    client: GeminiClient
+) -> str:
+    # Placeholder for multimodal generation of pros and cons summary
+    return "Pros and Cons summary for all vendors coming soon!"

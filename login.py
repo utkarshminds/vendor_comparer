@@ -17,7 +17,8 @@ from quote_system import (
     validate_quotation_document,
     validate_rfq_document,        # Add this for the new workflow
     validate_quotation_document_multimodal,  # Update this
-    validate_rfq_document_multimodal         # Update this
+    validate_rfq_document_multimodal,         # Update this
+    extract_rfq_requirements # Add this new import
 )
 from storage import (
     allowed_file_type,
@@ -46,6 +47,12 @@ def init_session_state() -> None:
         st.session_state.rfq_text = ""
     if "rfq_filename" not in st.session_state:
         st.session_state.rfq_filename = ""
+    if "rfq_requirements" not in st.session_state:
+        st.session_state.rfq_requirements = ""  # Changed from [] to an empty string
+    if "chat_query" not in st.session_state:
+        st.session_state.chat_query = ""
+    if "selected_requirement" not in st.session_state:
+        st.session_state.selected_requirement = ""
 
 def get_gemini_client() -> GeminiClient | None:
     api_key = get_gemini_api_key()
@@ -184,6 +191,9 @@ def main() -> None:
                         if validate_rfq_document_multimodal(file_bytes, mime_type, client):
                             st.session_state.rfq_raw_bytes = file_bytes  # Store raw bytes
                             st.session_state.rfq_filename = rfq_file.name
+                            st.session_state.rfq_raw_bytes = file_bytes  # Store raw bytes
+                            st.session_state.rfq_filename = rfq_file.name
+                            st.session_state.rfq_requirements = extract_rfq_requirements(file_bytes, client) # Extract requirements
                             st.success(f"Baseline set: {rfq_file.name}")
                             st.rerun()
                         else:
@@ -191,9 +201,15 @@ def main() -> None:
             else:
                 cols_rfq = st.columns([3, 1])
                 cols_rfq[0].success(f"**Active Baseline:** {st.session_state.rfq_filename}")
+                
+                # Add this block to display the extracted paragraph
+                if st.session_state.rfq_requirements:
+                    st.info(f"**Extracted RFQ Requirements:**\n{st.session_state.rfq_requirements}")
+
                 if cols_rfq[1].button("Reset RFQ", type="secondary"):
                     st.session_state.rfq_text = ""
                     st.session_state.rfq_filename = ""
+                    st.session_state.rfq_requirements = "" # Clear requirements
                     st.rerun()
 
             st.divider()
