@@ -1,5 +1,4 @@
-from email.mime import text
-from http import client
+
 import os
 import streamlit as st
 
@@ -68,7 +67,7 @@ def get_gemini_client() -> GeminiClient | None:
 def get_vector_db(client: GeminiClient) -> VectorDB:
     return VectorDB(client)
 
-def upload_and_validate_files(uploaded_files, client: GeminiClient) -> None:
+def upload_and_validate_files(uploaded_files, client: GeminiClient, vector_db: VectorDB) -> None:
     new_documents = {}
     for uploaded_file in uploaded_files:
         file_bytes = uploaded_file.getvalue()
@@ -81,6 +80,12 @@ def upload_and_validate_files(uploaded_files, client: GeminiClient) -> None:
             }
             # 3. Save to temp disk so the UI shows the correct KB
             save_uploaded_file(uploaded_file) 
+
+            # 4. RAG IMPLEMENTATION: Extract text and add to Vector DB
+            extracted_text = extract_uploaded_text(uploaded_file)
+            if extracted_text:
+                vector_db.add_document(uploaded_file.name, extracted_text)
+
         else:
             st.error(f"Validation failed for {uploaded_file.name}")
             
@@ -128,18 +133,28 @@ def render_uploaded_files(client: GeminiClient, vector_db: VectorDB) -> None:
                 )
 
 
-def render_chat_panel(client: GeminiClient) -> None:
-    # Use the function you already defined in quote_system.py
-    from quote_system import answer_from_multimodal_context
+def render_chat_panel(client: GeminiClient, vector_db: VectorDB) -> None:
+    # Use the RAG function instead of the multimodal one
+    
+    
+    st.session_state.chat_query = st.text_input("Ask a technical question about the bids:")
     
     if st.button("Submit"):
-        response = answer_from_multimodal_context(
-            query=st.session_state.chat_query,
-            rfq_bytes=st.session_state.rfq_raw_bytes,
-            bid_docs=st.session_state.documents,
-            client=client
-        )
-        st.session_state.chat_response = response
+        if not st.session_state.chat_query:
+            st.warning("Please enter a question.")
+            return
+            
+        with st.spinner("Searching vector database..."):
+            response = answer_from_vector_db(
+                query=st.session_state.chat_query,
+                vector_db=vector_db,
+                client=client
+            )
+            st.session_state.chat_response = response
+            
+    if st.session_state.chat_response:
+        st.markdown("### Answer")
+        st.write(st.session_state.chat_response)
 
 
 
@@ -191,8 +206,6 @@ def main() -> None:
                         if validate_rfq_document_multimodal(file_bytes, mime_type, client):
                             st.session_state.rfq_raw_bytes = file_bytes  # Store raw bytes
                             st.session_state.rfq_filename = rfq_file.name
-                            st.session_state.rfq_raw_bytes = file_bytes  # Store raw bytes
-                            st.session_state.rfq_filename = rfq_file.name
                             st.session_state.rfq_requirements = extract_rfq_requirements(file_bytes, client) # Extract requirements
                             st.success(f"Baseline set: {rfq_file.name}")
                             st.rerun()
@@ -227,7 +240,7 @@ def main() -> None:
                 )
                 
                 if uploaded_bids and st.button("Validate & Process Bids"):
-                    upload_and_validate_files(uploaded_bids, client)
+                    upload_and_validate_files(uploaded_bids, client, vector_db)
                 
                 if st.session_state.upload_warnings:
                     for w in st.session_state.upload_warnings:
@@ -267,7 +280,8 @@ def main() -> None:
             else:
                 st.subheader("💬 Technical Query Interface")
                 st.caption("Answers are strictly limited to the content of validated technical bids.")
-                render_chat_panel(client)
+                # Pass vector_db as the second argument
+                render_chat_panel(client, vector_db)
 
     else:
         # Standard Login Form

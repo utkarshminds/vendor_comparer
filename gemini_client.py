@@ -6,7 +6,7 @@ class GeminiClient:
     BASE_URL = "https://generativelanguage.googleapis.com/v1"
 
     # Defaulting to Pro as confirmed available for your key
-    def __init__(self, api_key: str, model: str = "gemini-3.1-flash-lite", embed_model: str = "text-embedding-004"):
+    def __init__(self, api_key: str, model: str = "gemini-3.1-flash-lite", embed_model: str = "gemini-embedding-2"):
         self.api_key = api_key
         self.model = model
         self.embed_model = embed_model
@@ -82,26 +82,7 @@ class GeminiClient:
         except Exception as e:
             raise Exception(f"Failed to generate embeddings: {str(e)}")
         
-    def answer_from_full_context(query: str, documents: Dict[str, str], client: GeminiClient) -> str:
-        """
-        Directly uses the 1M token limit of Gemini 2.5 Pro to answer queries 
-        without needing a vector database.
-        """
-        if not documents:
-            return "No documents available to discuss."
-
-        # Join all documents into one massive context block
-        full_context = "\n\n".join([f"Document: {name}\n{text}" for name, text in documents.items()])
-        
-        prompt = (
-            "SYSTEM: You are a secure technical auditor. Answer the user question ONLY using "
-            "the context provided below. If the answer is not there, say so.\n\n"
-            f"CONTEXT:\n{full_context}\n\n"
-            f"USER QUESTION: {query}"
-        )
-        
-        # Gemini 2.5 Pro can handle this effortlessly
-        return client.generate_text(prompt, temperature=0.1)
+    
     
 
     def generate_content_from_multiple_pdfs(self, file_data_list: List[Dict], prompt: str) -> str:

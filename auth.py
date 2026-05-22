@@ -20,4 +20,5 @@ def get_gemini_model() -> str:
 
 
 def get_gemini_embedding_model() -> str:
-    return get_secret("gemini_embedding_model", "gemini-embedding-1.0")
+    # Change the fallback from "gemini-embedding-2" to the correct model
+    return get_secret("gemini_embedding_model", "gemini-embedding-2")

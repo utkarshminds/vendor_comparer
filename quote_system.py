@@ -1,6 +1,27 @@
 from typing import Dict, List
 from gemini_client import GeminiClient
 
+def answer_from_full_context(query: str, documents: Dict[str, str], client: GeminiClient) -> str:
+        """
+        Directly uses the 1M token limit of Gemini 2.5 Pro to answer queries 
+        without needing a vector database.
+        """
+        if not documents:
+            return "No documents available to discuss."
+
+        # Join all documents into one massive context block
+        full_context = "\n\n".join([f"Document: {name}\n{text}" for name, text in documents.items()])
+        
+        prompt = (
+            "SYSTEM: You are a secure technical auditor. Answer the user question ONLY using "
+            "the context provided below. If the answer is not there, say so.\n\n"
+            f"CONTEXT:\n{full_context}\n\n"
+            f"USER QUESTION: {query}"
+        )
+        
+        # Gemini 2.5 Pro can handle this effortlessly
+        return client.generate_text(prompt, temperature=0.1)
+
 def evaluate_bids_multimodal(rfq_bytes: bytes, bid_docs: Dict[str, Dict], client: GeminiClient) -> str:
     # 1. Start the file list with the RFQ baseline
     file_list = [{"bytes": rfq_bytes, "mime_type": "application/pdf"}]
