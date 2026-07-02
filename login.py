@@ -1,4 +1,4 @@
-
+import re
 import os
 import streamlit as st
 
@@ -17,7 +17,8 @@ from quote_system import (
     validate_rfq_document,        # Add this for the new workflow
     validate_quotation_document_multimodal,  # Update this
     validate_rfq_document_multimodal,         # Update this
-    extract_rfq_requirements # Add this new import
+    extract_rfq_requirements, # Add this new import
+    extract_requirements_expansion_step
 )
 from storage import (
     allowed_file_type,
@@ -28,7 +29,64 @@ from storage import (
 )
 from vector_db import VectorDB
 
+def render_multi_color_table(md_text: str) -> None:
+    """
+    Parses a Markdown table and renders it as an HTML table with distinct 
+    colors for the RFQ baseline column vs each unique vendor column.
+    """
+    if "|" not in md_text:
+        st.markdown(md_text)
+        return
 
+    lines = md_text.split("\n")
+    table_lines = [l.strip() for l in lines if l.strip().startswith("|")]
+
+    if len(table_lines) < 3:
+        st.markdown(md_text)
+        return
+
+    try:
+        # Extract headers and body rows
+        headers = [h.strip() for h in table_lines[0].split("|")[1:-1]]
+        rows = []
+        for l in table_lines[2:]:
+            if l.strip().startswith("|"):
+                rows.append([c.strip() for c in l.split("|")[1:-1]])
+
+        # Distinct color palette per column index:
+        # Col 0 (RFQ/Parameters) | Col 1 (Vendor A) | Col 2 (Vendor B) | Col 3 (Vendor C)
+        cell_bgs = ["#eaf2f8", "#e8f8f5", "#fef9e7", "#f5eef8", "#fdf2e9", "#f4f6f7"]
+        header_bgs = ["#2e4053", "#117a65", "#b7950b", "#6c3483", "#a04000", "#566573"]
+
+        html_output = (
+            "<div style='overflow-x:auto; margin-top: 15px;'>"
+            "<table style='width:100%; border-collapse: collapse; font-family: sans-serif; font-size: 14px;'>"
+        )
+
+        # Build Headers
+        html_output += "<tr>"
+        for i, h in enumerate(headers):
+            bg = header_bgs[i % len(header_bgs)]
+            html_output += f"<th style='background-color: {bg}; border: 1px solid #bdc3c7; padding: 12px; text-align: left; color: white; font-weight: bold;'>{h}</th>"
+        html_output += "</tr>"
+
+        # Build Dynamic Rows
+        for row in rows:
+            if not any(row): continue
+            html_output += "<tr>"
+            for i, val in enumerate(row):
+                bg = cell_bgs[i % len(cell_bgs)]
+                # Preserve simple markdown bolding **text** inside HTML cells
+                clean_val = val.replace("**", "<strong>").replace("**", "</strong>")
+                html_output += f"<td style='background-color: {bg}; border: 1px solid #d5dbdb; padding: 12px; text-align: left; color: #2c3e50;'>{clean_val}</td>"
+            html_output += "</tr>"
+
+        html_output += "</table></div>"
+        st.markdown(html_output, unsafe_allow_html=True)
+    except Exception:
+        # Seamless fallback to default presentation if parsing drops out
+        st.markdown(md_text)
+        
 def init_session_state() -> None:
     if "logged_in" not in st.session_state:
         st.session_state.logged_in = False
@@ -47,7 +105,7 @@ def init_session_state() -> None:
     if "rfq_filename" not in st.session_state:
         st.session_state.rfq_filename = ""
     if "rfq_requirements" not in st.session_state:
-        st.session_state.rfq_requirements = ""  # Changed from [] to an empty string
+        st.session_state.rfq_requirements = []  # Changed from [] to an empty string
     if "chat_query" not in st.session_state:
         st.session_state.chat_query = ""
     if "selected_requirement" not in st.session_state:
@@ -206,7 +264,7 @@ def main() -> None:
                         if validate_rfq_document_multimodal(file_bytes, mime_type, client):
                             st.session_state.rfq_raw_bytes = file_bytes  # Store raw bytes
                             st.session_state.rfq_filename = rfq_file.name
-                            st.session_state.rfq_requirements = extract_rfq_requirements(file_bytes, client) # Extract requirements
+                        
                             st.success(f"Baseline set: {rfq_file.name}")
                             st.rerun()
                         else:
@@ -215,14 +273,82 @@ def main() -> None:
                 cols_rfq = st.columns([3, 1])
                 cols_rfq[0].success(f"**Active Baseline:** {st.session_state.rfq_filename}")
                 
-                # Add this block to display the extracted paragraph
-                if st.session_state.rfq_requirements:
-                    st.info(f"**Extracted RFQ Requirements:**\n{st.session_state.rfq_requirements}")
+                # CONDITIONAL RENDERING: Only show extract button once validated baseline exists but list is empty
+                if not st.session_state.rfq_requirements:
+                    st.info("Validation complete. Click below to pull all itemized engineering requirements.")
+                    
+                    if st.button("🔧 Extract Technical Requirements", type="primary"):
+                        import time
+                        
+                        total_passes = 5
+                        est_seconds_per_pass = 5 
+                        requirements_list = []   
+                        
+                        progress_bar = st.progress(0, text="Initializing file sequence...")
+                        
+                        for i in range(1, total_passes + 1):
+                            time_left = (total_passes - i + 1) * est_seconds_per_pass
+                            percent_complete = int(((i - 1) / total_passes) * 100)
+                            
+                            progress_bar.progress(
+                                percent_complete, 
+                                text=f"⏳ Running Extraction Loop {i}/{total_passes}... [~{time_left}s remaining]"
+                            )
+                            
+                            requirements_list = extract_requirements_expansion_step(
+                                st.session_state.rfq_raw_bytes,
+                                requirements_list,
+                                i,
+                                client
+                            )
+                        
+                        progress_bar.progress(100, text="✅ Technical requirements completely captured!")
+                        time.sleep(1)
+                        
+                        # Set to state as a strict verified Python list
+                        st.session_state.rfq_requirements = list(requirements_list)
+                        st.rerun()
+                else:
+                    st.markdown("### 📊 Extracted Technical Requirements Matrix")
+                    
+                    raw_reqs = st.session_state.rfq_requirements
+                    final_list = [raw_reqs] if isinstance(raw_reqs, str) else list(raw_reqs)
+                    
+                    html_table = (
+                        "<div style='overflow-x:auto; width: 100%; margin-top: 10px;'>"
+                        "<table style='width: 100%; min-width: 100%; border-collapse: collapse; font-family: sans-serif; font-size: 14px;'>"
+                        "<tr style='background-color: #f8f9fa; border-bottom: 2px solid #dee2e6;'>"
+                        "<th style='width: 8%; padding: 12px; text-align: left; font-weight: 600; color: #495057;'>Sr. No.</th>"
+                        "<th style='width: 92%; padding: 12px; text-align: left; font-weight: 600; color: #495057;'>Technical Requirement Specification</th>"
+                        "</tr>"
+                    )
+                    
+                    for idx, item in enumerate(final_list):
+                        text = str(item).strip()
+                        
+                        # CRITICAL: Boundary-only cleanup engine applied before display rendering.
+                        # Internal quote expressions or escaped slashes remain intact.
+                        text = re.sub(r'^[\"\\\'\s\u201c\u201d,]+', '', text)
+                        clean_item = re.sub(r'[\"\\\'\s\u201c\u201d,]+$', '', text)
+                        
+                        bg_color = "#ffffff" if idx % 2 == 0 else "#fdfdfd"
+                        
+                        html_table += (
+                            f"<tr style='background-color: {bg_color}; border-bottom: 1px solid #e9ecef;'>\n"
+                            f"<td style='padding: 14px 12px; color: #6c757d; vertical-align: top;'>{idx + 1}</td>\n"
+                            f"<td style='padding: 14px 12px; color: #212529; line-height: 1.5; text-align: justify;'>{clean_item}</td>\n"
+                            f"</tr>"
+                        )
+                        
+                    html_table += "</table></div>"
+                    st.markdown(html_table, unsafe_allow_html=True)
 
                 if cols_rfq[1].button("Reset RFQ", type="secondary"):
                     st.session_state.rfq_text = ""
                     st.session_state.rfq_filename = ""
-                    st.session_state.rfq_requirements = "" # Clear requirements
+                    st.session_state.rfq_requirements = [] 
+                    if "rfq_raw_bytes" in st.session_state:
+                        del st.session_state.rfq_raw_bytes
                     st.rerun()
 
             st.divider()
@@ -232,7 +358,6 @@ def main() -> None:
             if not st.session_state.rfq_filename:
                 st.warning("Please upload a baseline RFQ above before processing vendor bids.")
             else:
-                
                 uploaded_bids = st.file_uploader(
                     "Upload Technical Bids", 
                     accept_multiple_files=True, 
@@ -253,14 +378,12 @@ def main() -> None:
                     st.divider()
                     st.subheader("3. Automated Technical Evaluation")
                     if st.button("Run Full Comparison Analysis", type="primary"):
-                        # Check for raw bytes instead of text
                         if not st.session_state.get("rfq_raw_bytes"):
                             st.error("Please upload the Request for Quotation (RFQ) first.")
                         elif not st.session_state.documents:
                             st.error("Please upload at least one technical bid to evaluate.")
                         else:
                             with st.spinner("Analyzing bids against technical norms..."):
-                                # Call the multimodal function you defined in quote_system.py
                                 from quote_system import evaluate_bids_multimodal
                                 summary = evaluate_bids_multimodal(
                                     st.session_state.rfq_raw_bytes, 
@@ -268,10 +391,11 @@ def main() -> None:
                                     client
                                 )
                                 st.session_state.analysis_summary = summary
+                                st.rerun()
                     
                     if st.session_state.analysis_summary:
-                        st.markdown("### Evaluation Summary")
-                        st.write(st.session_state.analysis_summary)
+                        st.markdown("### Evaluation Summary Matrix")
+                        render_multi_color_table(st.session_state.analysis_summary)
 
         # --- TAB 2: SECURE CHAT ---
         with tab_chat:

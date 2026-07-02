@@ -1,6 +1,121 @@
 from typing import Dict, List
 from gemini_client import GeminiClient
+import json
+import re
 
+
+
+def extract_requirements_expansion_step(rfq_bytes: bytes, current_requirements: List[str], iteration: int, client: GeminiClient) -> List[str]:
+    """
+    Executes a single step of a 5-pass sequential expansion extraction pipeline.
+    Cleans ONLY the absolute start and absolute end of the strings using strict anchors.
+    """
+    if iteration == 1:
+        prompt = (
+            "SYSTEM: You are an expert technical procurement auditor.\n"
+            "TASK:\n"
+            "1. Deeply analyze the attached Original RFQ PDF Document.\n"
+            "2. Identify and extract 10-15 highly specific, descriptive, yet concise technical requirements (focusing strictly on engineering specifications, material grades, regulatory standards like ASME/API/ISO, tolerances, tag numbers, testing rules, and line items).\n"
+            "STRICT OUTPUT RULE: Return your response ONLY as a valid JSON array of strings, for example: [\"requirement 1\", \"requirement 2\"]. "
+            "Do not include any markdown code block wrappers like ```json, headers, intro prose, or conversational greetings. Output ONLY the raw JSON string array."
+        )
+    else:
+        formatted_previous = json.dumps(current_requirements, ensure_ascii=False, indent=2)
+        prompt = (
+            "SYSTEM: You are an expert technical procurement auditor executing an iterative requirement expansion loop.\n\n"
+            f"TECHNICAL REQUIREMENTS EXTRACTED SO FAR (JSON Array Format):\n{formatted_previous}\n\n"
+            "TASK:\n"
+            "1. Re-scan the attached Original RFQ PDF Document thoroughly a second time.\n"
+            "2. Identify 10-15 NEW technical requirements, sub-specifications, raw material constraints, design tolerances, or line items that are present in the PDF text but completely missing from the list of requirements extracted so far.\n"
+            "3. Concatenate and merge these newly discovered requirements with the existing ones into a single consolidated master list. Never drop, truncate, or omit any item from the previous list provided above.\n"
+            "4. Keep every text entry descriptive, faithful to the source document, and highly specific.\n"
+            "STRICT OUTPUT RULE: Return your response ONLY as a single valid JSON array of strings containing all combined items. "
+            "Do not include markdown code block wrappers like ```json, do not write header descriptions or intro/outro text. Output ONLY the raw JSON string array."
+        )
+
+    raw_response = client.generate_content_from_bytes(rfq_bytes, "application/pdf", prompt, temperature=0.1)
+
+    # Scrub off markdown wrappers if any exist
+    cleaned = raw_response.strip()
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[7:]
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+    cleaned = cleaned.strip()
+
+    raw_list = []
+    try:
+        parsed_list = json.loads(cleaned)
+        if isinstance(parsed_list, list):
+            raw_list = [str(item) for item in parsed_list]
+    except Exception:
+        raw_list = [line for line in raw_response.split("\n") if line.strip()]
+
+    processed_requirements = []
+    for item in raw_list:
+        text = item.strip()
+        
+        # CRITICAL: Clean ONLY the absolute outer edges using strict start (^) and end ($) anchors.
+        # This includes trailing commas, slashes, and boundary quotes without altering anything inside.
+        text = re.sub(r'^[\"\\\'\s\u201c\u201d,]+', '', text)
+        text = re.sub(r'[\"\\\'\s\u201c\u201d,]+$', '', text)
+        
+        if text and len(text) > 5:
+            processed_requirements.append(text)
+
+    return processed_requirements if processed_requirements else ["Failed to parse structured requirements text cleanly."]
+    
+def extract_requirements_chain_of_density(rfq_text: str, client: GeminiClient) -> List[Dict[str, str]]:
+    """
+    Executes a 5-iteration Chain of Density (CoD) pipeline on the RFQ content.
+    Returns a list of 5 dictionaries containing 'Missing_Entities' and 'Denser_Summary'.
+    """
+    prompt = (
+        "You will generate increasingly concise, entity-dense summaries of the provided RFQ Document Content.\n"
+        "Repeat the following 2 steps 5 times.\n\n"
+        "Step 1. Identify 1-3 informative Entities (';' delimited) from the document text which are missing from the previously generated summary.\n"
+        "Step 2. Write a new, denser summary of identical length which covers every entity and detail from the previous summary plus the Missing Entities.\n\n"
+        "A Missing Entity is:\n"
+        "- Relevant: directly tied to the technical specifications, scope of work, standards, or line items.\n"
+        "- Specific: descriptive yet concise (5 words or fewer).\n"
+        "- Novel: not contained in any previous summary iteration.\n"
+        "- Faithful: explicitly present in the document source.\n"
+        "- Anywhere: located in any section of the document.\n\n"
+        "Guidelines:\n"
+        "1. The first summary should be long (4-5 sentences, ~80 words) yet highly non-specific, containing little information beyond the entities marked as missing. Use overly verbose language and filler phrases (e.g., 'this technical specification document introduces aspects regarding') to reach ~80 words.\n"
+        "2. Make every word count: re-write the previous summary to improve flow and make space for additional entities.\n"
+        "3. Make space with fusion, compression, and removal of uninformative phrases like 'the article discusses'.\n"
+        "4. The summaries should become highly dense and concise yet self-contained, easily understood without reading the raw document.\n"
+        "5. Missing entities can appear anywhere in the new summary.\n"
+        "6. Never drop entities from the previous summary. If space cannot be made, add fewer new entities.\n"
+        "7. CRITICAL: Maintain the exact same number of words for each of the 5 summary iterations.\n\n"
+        "STRICT OUTPUT FORMAT:\n"
+        "Return your response ONLY as a valid, clean JSON array containing exactly 5 objects. Do not include markdown formatting code blocks like ```json ... ```. "
+        "Each object must have exactly two keys: 'Missing_Entities' and 'Denser_Summary'.\n\n"
+        f"RFQ Document Content:\n{rfq_text}"
+    )
+    
+    # Using low temperature for strict deterministic compliance with requirements extraction
+    raw_response = client.generate_text(prompt, temperature=0.1, max_output_tokens=2500)
+    
+    # Safeguard: Clean markdown block wrappers if the model accidentally includes them
+    cleaned_response = raw_response.strip()
+    if cleaned_response.startswith("```json"):
+        cleaned_response = cleaned_response[7:]
+    if cleaned_response.endswith("```"):
+        cleaned_response = cleaned_response[:-3]
+    cleaned_response = cleaned_response.strip()
+
+    try:
+        return json.loads(cleaned_response)
+    except json.JSONDecodeError as e:
+        # Fallback structured schema if json structure fails due to generation anomalies
+        print(f"CoD JSON Parsing failed: {e}. Raw: {raw_response}")
+        return [{
+            "Missing_Entities": "Error parsing output content",
+            "Denser_Summary": raw_response
+        }]
+    
 def answer_from_full_context(query: str, documents: Dict[str, str], client: GeminiClient) -> str:
         """
         Directly uses the 1M token limit of Gemini 2.5 Pro to answer queries 
@@ -36,7 +151,7 @@ def evaluate_bids_multimodal(rfq_bytes: bytes, bid_docs: Dict[str, Dict], client
     prompt = (
         "SYSTEM: You are a Procurement Auditor. Compare these vendor bids against the RFQ. "
         "Analyze visual tables, technical specifications, and formatting in the PDFs. " 
-        "Provide a compliance details include all exhaustive details, for each vendor relative to the RFQ requirements. Mention exact details including numbers if any. Entire analysis should be based on the content of the PDFs without any assumptions. Be concise and technical. Give output in form of table only. Do not discuss the system or code. Focus solely on the technical evaluation of the bids against the RFQ. Consider all parameters given in the RFQ, including scope, technical norms, and line items. If information is missing in a bid, note that as a con. Do not make assumptions beyond the provided documents."
+        "Provide a compliance details include all exhaustive details covering 50 technical requirements of the RFQ, for each vendor relative to the RFQ requirements. Mention exact details including numbers if any. Entire analysis should be based on the content of the PDFs without any assumptions. Be concise and technical. Give output in form of table only. Do not discuss the system or code. Focus solely on the technical evaluation of the bids against the RFQ. Consider all parameters given in the RFQ, including scope, technical norms, and line items. If information is missing in a bid, return the word missing. Do not make assumptions beyond the provided documents."
     )
     
     # Send all files at once to Gemini 3.1 Flash Lite
