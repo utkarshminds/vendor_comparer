@@ -151,7 +151,7 @@ def evaluate_bids_multimodal(rfq_bytes: bytes, bid_docs: Dict[str, Dict], client
     prompt = (
         "SYSTEM: You are a Procurement Auditor. Compare these vendor bids against the RFQ. "
         "Analyze visual tables, technical specifications, and formatting in the PDFs. " 
-        "Provide a compliance details include all exhaustive details covering 50 technical requirements of the RFQ, for each vendor relative to the RFQ requirements. Mention exact details including numbers if any. Entire analysis should be based on the content of the PDFs without any assumptions. Be concise and technical. Give output in form of table only. Do not discuss the system or code. Focus solely on the technical evaluation of the bids against the RFQ. Consider all parameters given in the RFQ, including scope, technical norms, and line items. If information is missing in a bid, return the word missing. Do not make assumptions beyond the provided documents."
+        "Provide a compliance details include all exhaustive details covering atleast 50 technical requirements of the RFQ, for each vendor relative to the RFQ requirements. Mention exact details including numbers if any. Entire analysis should be based on the content of the PDFs without any assumptions. Be concise and technical. Give output in form of table only. Do not discuss the system or code. Focus solely on the technical evaluation of the bids against the RFQ. Consider all parameters given in the RFQ, including scope, technical norms, and line items. If information is missing in a bid, return the word missing. Do not make assumptions beyond the provided documents."
     )
     
     # Send all files at once to Gemini 3.1 Flash Lite
